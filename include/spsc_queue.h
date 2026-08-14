@@ -1,10 +1,13 @@
 #pragma once
 
+#include "spin_hint.h"
+
 #include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <optional>
 #include <type_traits>
+#include <utility>      // std::move
 
 /// Lock-free single-producer / single-consumer bounded queue.
 ///
@@ -47,7 +50,7 @@ class SPSCQueue {
     static constexpr std::size_t kCacheLine = 64;
 
 public:
-    SPSCQueue() : head_(0), tail_(0) {
+    SPSCQueue() : head_(0), cached_tail_(0), tail_(0), cached_head_(0) {
         // Placement-new is not needed; the array of T is default-initialized
         // only if T is trivially default-constructible.  We write before read,
         // so uninitialised slots are never observed.
@@ -67,13 +70,19 @@ public:
     // ── Producer API (call from exactly ONE thread) ─────────────────────
 
     /// Non-blocking push.  Returns true on success, false if the queue is full.
+    ///
+    /// Consults the producer-private cached_tail_ first and only touches the
+    /// real tail_ when the cache claims the queue is full — see the note on
+    /// cached_tail_ for why that is both safe and much faster.
     bool try_push(const T& item) {
         const std::size_t h = head_.load(std::memory_order_relaxed);
         const std::size_t next = (h + 1) & kMask;
 
-        // Full when next head would collide with current tail.
-        if (next == tail_.load(std::memory_order_acquire)) {
-            return false;
+        if (next == cached_tail_) {
+            cached_tail_ = tail_.load(std::memory_order_acquire);
+            if (next == cached_tail_) {
+                return false;          // genuinely full
+            }
         }
 
         slots_[h] = item;
@@ -86,8 +95,11 @@ public:
         const std::size_t h = head_.load(std::memory_order_relaxed);
         const std::size_t next = (h + 1) & kMask;
 
-        if (next == tail_.load(std::memory_order_acquire)) {
-            return false;
+        if (next == cached_tail_) {
+            cached_tail_ = tail_.load(std::memory_order_acquire);
+            if (next == cached_tail_) {
+                return false;          // genuinely full
+            }
         }
 
         slots_[h] = std::move(item);
@@ -98,26 +110,31 @@ public:
     /// Spinning push.  Blocks until space is available.
     void push(const T& item) {
         while (!try_push(item)) {
-            // spin
+            spin_pause();
         }
     }
 
     /// Spinning push (move overload).
     void push(T&& item) {
         while (!try_push(std::move(item))) {
-            // spin
+            spin_pause();
         }
     }
 
     // ── Consumer API (call from exactly ONE thread) ─────────────────────
 
     /// Non-blocking pop.  Returns std::nullopt if the queue is empty.
+    ///
+    /// Mirror of try_push: consults the consumer-private cached_head_ and only
+    /// reads the real head_ when the cache claims the queue is empty.
     std::optional<T> try_pop() {
         const std::size_t t = tail_.load(std::memory_order_relaxed);
 
-        // Empty when tail == head.
-        if (t == head_.load(std::memory_order_acquire)) {
-            return std::nullopt;
+        if (t == cached_head_) {
+            cached_head_ = head_.load(std::memory_order_acquire);
+            if (t == cached_head_) {
+                return std::nullopt;   // genuinely empty
+            }
         }
 
         T item = std::move(slots_[t]);
@@ -132,7 +149,7 @@ public:
             if (item.has_value()) {
                 return std::move(*item);
             }
-            // spin
+            spin_pause();
         }
     }
 
@@ -150,8 +167,27 @@ public:
 
 private:
     // ── Data layout: head and tail on separate cache lines ──────────────
+    //
+    // Each side also carries a private, non-atomic cache of the *other* side's
+    // index, deliberately placed on its owner's cache line.
+    //
+    // Without this, every single push reads tail_ and every single pop reads
+    // head_ — i.e. each operation touches the cache line the opposite thread is
+    // actively writing, forcing a coherence transfer between cores on every
+    // element.  That cost dominates the hot path and is why a naive SPSC ring
+    // can lose to a well-tuned MPMC queue.
+    //
+    // Safety: a cached value is always a *stale* copy of an index that only
+    // moves forward, so it can only ever under-report available space (or
+    // available items) — never over-report.  A false "full"/"empty" simply
+    // triggers a re-read of the real atomic, which then gives the truth.  The
+    // acquire load on that refresh is what establishes the happens-before edge
+    // with the other thread's release store, exactly as before.
     alignas(kCacheLine) std::atomic<std::size_t> head_;
+    std::size_t cached_tail_;   // producer-private; shares the producer's line
+
     alignas(kCacheLine) std::atomic<std::size_t> tail_;
+    std::size_t cached_head_;   // consumer-private; shares the consumer's line
 
     // Slot array — separate from head/tail to avoid false sharing.
     alignas(kCacheLine) T slots_[kBufSize];
