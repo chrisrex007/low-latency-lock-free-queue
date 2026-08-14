@@ -1,0 +1,54 @@
+g++ -std=c++17 -Wall -Wextra -O1 -g -fsanitize=thread -Iinclude -pthread -DSTRESS_ITEMS_PER_PRODUCER=2000 -DBENCH_OPS=40000 -DTHREADED_N=20000 -o test_spsc_tsan  tests/test_spsc_queue.cpp
+g++ -std=c++17 -Wall -Wextra -O1 -g -fsanitize=thread -Iinclude -pthread -DSTRESS_ITEMS_PER_PRODUCER=2000 -DBENCH_OPS=40000 -DTHREADED_N=20000 -o test_mutex_tsan tests/test_mutex_queue.cpp
+g++ -std=c++17 -Wall -Wextra -O1 -g -fsanitize=thread -Iinclude -pthread -DSTRESS_ITEMS_PER_PRODUCER=2000 -DBENCH_OPS=40000 -DTHREADED_N=20000 -o test_mpmc_tsan  tests/test_mpmc_queue.cpp
+── TSan: SPSCQueue ──
+═══ SPSCQueue Tests ═══
+
+[test] basic push/pop ... done
+[test] try_push when full ... (usable capacity=3) done
+[test] try_pop when empty ... done
+[test] FIFO ordering ... done
+[test] wrap-around ... done
+[test] size_approx ... done
+[test] capacity rounding ... done
+[test] threaded SPSC correctness ... done
+
+[bench] SPSC throughput (lock-free) ...
+  40000 ops in 16.17 ms  →  2.47 Mops/s
+
+═══ Results: 24 passed, 0 failed ═══
+── TSan: MutexQueue ──
+═══ MutexQueue Tests ═══
+
+[test] basic push/pop ... done
+[test] try_push when full ... done
+[test] try_pop when empty ... done
+[test] move semantics ... done
+[test] FIFO ordering ... done
+[test] SPSC threaded ... done
+[test] MPMC threaded ... done
+[test] blocking push backpressure ... done
+
+[bench] SPSC throughput (mutex baseline) ...
+  40000 ops in 125.22 ms  →  0.32 Mops/s
+
+═══ Results: 21 passed, 0 failed ═══
+── TSan: MPMCQueue ──
+═══ MPMCQueue Tests ═══
+
+[test] basic push/pop ... done
+[test] try_push when full ... (usable capacity=2) done
+[test] try_pop when empty ... done
+[test] move semantics ... done
+[test] single-producer FIFO ordering ... done
+[test] wrap-around ... done
+[test] size_approx ... done
+[test] capacity rounding ... done
+[test] threaded 1P1C correctness ... done
+[test] MPMC threaded (completeness + uniqueness) ... done
+
+[bench] MPMC throughput (lock-free, 4P4C) ...
+  40000 ops in 43.71 ms  →  0.92 Mops/s
+
+═══ Results: 30 passed, 0 failed ═══
+TSan run complete — clean (a detected race would have failed this target).
