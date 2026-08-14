@@ -1,4 +1,5 @@
 #include "spsc_queue.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <cassert>
@@ -9,21 +10,17 @@
 #include <thread>
 #include <vector>
 
-// ─── Test helpers ───────────────────────────────────────────────────────────
+// ─── Tunables ───────────────────────────────────────────────────────────────
+// Overridable so sanitizer builds can run a much smaller workload — TSan slows
+// execution by roughly 10-20x.  See the `tsan` target in the Makefile.
 
-static std::atomic<int> tests_passed{0};
-static std::atomic<int> tests_failed{0};
+#ifndef THREADED_N
+#define THREADED_N 1000000
+#endif
 
-#define CHECK(cond, msg)                                                    \
-    do {                                                                    \
-        if (!(cond)) {                                                      \
-            std::fprintf(stderr, "  FAIL: %s  (%s:%d)\n", msg, __FILE__,   \
-                         __LINE__);                                         \
-            tests_failed.fetch_add(1);                                      \
-        } else {                                                            \
-            tests_passed.fetch_add(1);                                      \
-        }                                                                   \
-    } while (0)
+#ifndef BENCH_OPS
+#define BENCH_OPS 10000000
+#endif
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -146,7 +143,7 @@ void test_capacity_rounding() {
 
 void test_threaded_spsc() {
     std::printf("[test] threaded SPSC correctness ... ");
-    constexpr int N = 1'000'000;
+    constexpr int N = THREADED_N;
     SPSCQueue<int, 1024> q;
 
     std::thread producer([&] {
@@ -183,7 +180,7 @@ void test_threaded_spsc() {
 
 void bench_spsc_throughput() {
     std::printf("\n[bench] SPSC throughput (lock-free) ...\n");
-    constexpr int N = 10'000'000;
+    constexpr int N = BENCH_OPS;
     SPSCQueue<std::uint64_t, 1024> q;
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -233,8 +230,5 @@ int main() {
 
     bench_spsc_throughput();
 
-    std::printf("\n═══ Results: %d passed, %d failed ═══\n",
-                tests_passed.load(), tests_failed.load());
-
-    return tests_failed.load() > 0 ? 1 : 0;
+    return test_summary();
 }

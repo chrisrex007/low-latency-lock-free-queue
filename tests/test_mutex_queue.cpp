@@ -1,4 +1,5 @@
 #include "mutex_queue.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <string>
@@ -9,21 +10,21 @@
 #include <thread>
 #include <vector>
 
-// ─── Test helpers ───────────────────────────────────────────────────────────
+// ─── Tunables ───────────────────────────────────────────────────────────────
+// Overridable so sanitizer builds can run a much smaller workload — TSan slows
+// execution by roughly 10-20x.  See the `tsan` target in the Makefile.
 
-static std::atomic<int> tests_passed{0};
-static std::atomic<int> tests_failed{0};
+#ifndef THREADED_N
+#define THREADED_N 100000
+#endif
 
-#define CHECK(cond, msg)                                                    \
-    do {                                                                    \
-        if (!(cond)) {                                                      \
-            std::fprintf(stderr, "  FAIL: %s  (%s:%d)\n", msg, __FILE__,   \
-                         __LINE__);                                         \
-            tests_failed.fetch_add(1);                                      \
-        } else {                                                            \
-            tests_passed.fetch_add(1);                                      \
-        }                                                                   \
-    } while (0)
+#ifndef STRESS_ITEMS_PER_PRODUCER
+#define STRESS_ITEMS_PER_PRODUCER 25000
+#endif
+
+#ifndef BENCH_OPS
+#define BENCH_OPS 10000000
+#endif
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ void test_fifo_ordering() {
 
 void test_single_producer_single_consumer() {
     std::printf("[test] SPSC threaded ... ");
-    constexpr int N = 100'000;
+    constexpr int N = THREADED_N;
     MutexQueue<int, 256> q;
 
     std::thread producer([&] {
@@ -143,7 +144,7 @@ void test_multi_producer_multi_consumer() {
     std::printf("[test] MPMC threaded ... ");
     constexpr int num_producers = 4;
     constexpr int num_consumers = 4;
-    constexpr int items_per_producer = 25'000;
+    constexpr int items_per_producer = STRESS_ITEMS_PER_PRODUCER;
     constexpr int total = num_producers * items_per_producer;
 
     MutexQueue<int, 256> q;
@@ -231,7 +232,7 @@ void test_blocking_push_backpressure() {
 
 void bench_spsc_throughput() {
     std::printf("\n[bench] SPSC throughput (mutex baseline) ...\n");
-    constexpr int N = 10'000'000;
+    constexpr int N = BENCH_OPS;
     MutexQueue<std::uint64_t, 1024> q;
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -281,8 +282,5 @@ int main() {
 
     bench_spsc_throughput();
 
-    std::printf("\n═══ Results: %d passed, %d failed ═══\n",
-                tests_passed.load(), tests_failed.load());
-
-    return tests_failed.load() > 0 ? 1 : 0;
+    return test_summary();
 }
