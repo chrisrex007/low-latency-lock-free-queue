@@ -7,8 +7,8 @@
 #include <queue>
 
 /// Thread-safe bounded queue using std::mutex + std::condition_variable.
-/// Serves as the baseline (control group) for benchmarking against
-/// lock-free SPSC and SPMC implementations.
+/// Serves as the baseline (control group) for benchmarking against the
+/// lock-free SPSC and MPMC implementations.
 ///
 /// Template parameters:
 ///   T        — element type (must be movable)
